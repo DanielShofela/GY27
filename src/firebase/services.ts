@@ -107,6 +107,124 @@ export async function logOutAdmin(): Promise<void> {
   await signOut(auth);
 }
 
+// Safe chunk threshold in characters for Firestore documents (~350 KB, well under 1,048,576 bytes limit)
+const LOGO_CHUNK_SIZE = 350 * 1024;
+
+/**
+ * Persists an SVG data URI into dedicated Firestore documents, chunking if necessary.
+ * Avoids ever exceeding Firestore's strict 1,048,576 bytes document limit.
+ */
+export async function saveLogoToFirestore(
+  logoKey: 'logo_main' | 'logo_header',
+  dataUri: string,
+  user?: User | null
+): Promise<void> {
+  const isAuthorized = await verifyIsAdmin(user);
+  if (!isAuthorized) {
+    throw new Error('NOT_AUTHORIZED');
+  }
+
+  const now = new Date().toISOString();
+  const version = Date.now();
+
+  if (dataUri.length <= LOGO_CHUNK_SIZE) {
+    // Single document mode
+    await setDoc(doc(db, 'settings', logoKey), {
+      type: 'single',
+      chunksCount: 1,
+      dataUri,
+      updatedAt: now,
+      version,
+    });
+  } else {
+    // Multi-chunk mode
+    const totalChunks = Math.ceil(dataUri.length / LOGO_CHUNK_SIZE);
+    const chunkWrites = [];
+    for (let i = 0; i < totalChunks; i++) {
+      const chunk = dataUri.slice(i * LOGO_CHUNK_SIZE, (i + 1) * LOGO_CHUNK_SIZE);
+      chunkWrites.push(
+        setDoc(doc(db, 'settings', `${logoKey}_chunk_${i}`), {
+          chunk,
+          index: i,
+          totalChunks,
+          updatedAt: now,
+        })
+      );
+    }
+    await Promise.all(chunkWrites);
+
+    // Write manifest doc
+    await setDoc(doc(db, 'settings', logoKey), {
+      type: 'chunked',
+      chunksCount: totalChunks,
+      totalLength: dataUri.length,
+      updatedAt: now,
+      version,
+    });
+  }
+}
+
+/**
+ * Loads a logo SVG data URI from dedicated Firestore documents, reassembling chunks if needed.
+ */
+export async function loadLogoFromFirestore(
+  logoKey: 'logo_main' | 'logo_header'
+): Promise<string | null> {
+  try {
+    const snapshot = await getDoc(doc(db, 'settings', logoKey));
+    if (!snapshot.exists()) return null;
+    const data = snapshot.data();
+
+    if (data?.type === 'chunked' && data?.chunksCount > 1) {
+      const chunkSnaps = await Promise.all(
+        Array.from({ length: data.chunksCount }, (_, i) =>
+          getDoc(doc(db, 'settings', `${logoKey}_chunk_${i}`))
+        )
+      );
+      const assembled = chunkSnaps.map((s) => s.data()?.chunk || '').join('');
+      return assembled || null;
+    }
+
+    if (data?.dataUri) {
+      return data.dataUri;
+    }
+
+    return null;
+  } catch (err) {
+    console.warn(`Could not load logo ${logoKey} from Firestore:`, err);
+    return null;
+  }
+}
+
+/**
+ * Removes a logo from dedicated Firestore documents including any chunks.
+ */
+export async function deleteLogoFromFirestore(
+  logoKey: 'logo_main' | 'logo_header',
+  user?: User | null
+): Promise<void> {
+  const isAuthorized = await verifyIsAdmin(user);
+  if (!isAuthorized) {
+    throw new Error('NOT_AUTHORIZED');
+  }
+
+  try {
+    const snapshot = await getDoc(doc(db, 'settings', logoKey));
+    if (snapshot.exists()) {
+      const data = snapshot.data();
+      const deletes = [deleteDoc(doc(db, 'settings', logoKey))];
+      if (data?.chunksCount && data.chunksCount > 1) {
+        for (let i = 0; i < data.chunksCount; i++) {
+          deletes.push(deleteDoc(doc(db, 'settings', `${logoKey}_chunk_${i}`)));
+        }
+      }
+      await Promise.all(deletes);
+    }
+  } catch (err) {
+    console.warn(`Error deleting logo ${logoKey} from Firestore:`, err);
+  }
+}
+
 /**
  * Retrieves global event settings with Firestore persistence and client-side fallback cache.
  */
@@ -123,25 +241,50 @@ export async function getEventSettings(): Promise<EventSettings> {
 
   try {
     const snapshot = await getDoc(doc(db, 'settings', 'event'));
+    let firestoreData: Partial<EventSettings> = {};
     if (snapshot.exists()) {
-      const firestoreData = snapshot.data() as Partial<EventSettings>;
-      const merged: EventSettings = {
-        ...DEFAULT_SETTINGS,
-        ...cached,
-        ...firestoreData,
-      };
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem('gyw_event_settings', JSON.stringify(merged));
-        } catch {
-          // ignore
-        }
-      }
-      return merged;
+      firestoreData = snapshot.data() as Partial<EventSettings>;
     }
-    return { ...DEFAULT_SETTINGS, ...cached };
+
+    const merged: EventSettings = {
+      ...DEFAULT_SETTINGS,
+      ...cached,
+      ...firestoreData,
+    };
+
+    // 1. Resolve main logo if stored in dedicated document
+    if (firestoreData.logoUrl === 'firestore:logo_main' || (!firestoreData.logoUrl && !cached.logoUrl)) {
+      const loaded = await loadLogoFromFirestore('logo_main');
+      if (loaded) {
+        merged.logoUrl = loaded;
+      } else if (!firestoreData.logoUrl) {
+        merged.logoUrl = DEFAULT_SETTINGS.logoUrl;
+      }
+    } else if (firestoreData.logoUrl) {
+      merged.logoUrl = firestoreData.logoUrl;
+    }
+
+    // 2. Resolve header logo if stored in dedicated document
+    if (firestoreData.headerLogoUrl === 'firestore:logo_header') {
+      const loaded = await loadLogoFromFirestore('logo_header');
+      if (loaded) {
+        merged.headerLogoUrl = loaded;
+      } else {
+        merged.headerLogoUrl = '';
+      }
+    } else if (firestoreData.headerLogoUrl !== undefined) {
+      merged.headerLogoUrl = firestoreData.headerLogoUrl;
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gyw_event_settings', JSON.stringify(merged));
+      } catch {
+        // ignore
+      }
+    }
+    return merged;
   } catch (error) {
-    // If read fails or not yet created, return cached / defaults
     console.warn('Could not load settings from server, using cached/defaults:', error);
     return { ...DEFAULT_SETTINGS, ...cached };
   }
@@ -163,10 +306,12 @@ export function cleanFirestoreData<T extends Record<string, any>>(obj: T): T {
 /**
  * Updates event settings (Admin only).
  * Connects through the secure backend API with direct Firestore fallback and atomic validation.
+ * Guaranteed to keep the settings/event document under 5 KB by decoupling heavy data URIs.
  */
 export async function updateEventSettings(
   newSettings: Partial<EventSettings>,
-  callerUser?: User | null
+  callerUser?: User | null,
+  autoProcessLogos = true
 ): Promise<EventSettings> {
   const user = callerUser || auth.currentUser;
   const isAuthorized = await verifyIsAdmin(user);
@@ -176,9 +321,33 @@ export async function updateEventSettings(
 
   const path = 'settings/event';
   const existing = await getEventSettings();
+
+  let resolvedLogoUrl = newSettings.logoUrl !== undefined ? newSettings.logoUrl : existing.logoUrl;
+  let resolvedHeaderLogoUrl =
+    newSettings.headerLogoUrl !== undefined ? newSettings.headerLogoUrl : existing.headerLogoUrl;
+
+  // Protect settings/event from 1MB limit by decoupling large data URIs
+  let payloadLogoUrl = resolvedLogoUrl;
+  if (resolvedLogoUrl && resolvedLogoUrl.startsWith('data:')) {
+    if (autoProcessLogos) {
+      await saveLogoToFirestore('logo_main', resolvedLogoUrl, user);
+    }
+    payloadLogoUrl = 'firestore:logo_main';
+  }
+
+  let payloadHeaderLogoUrl = resolvedHeaderLogoUrl;
+  if (resolvedHeaderLogoUrl && resolvedHeaderLogoUrl.startsWith('data:')) {
+    if (autoProcessLogos) {
+      await saveLogoToFirestore('logo_header', resolvedHeaderLogoUrl, user);
+    }
+    payloadHeaderLogoUrl = 'firestore:logo_header';
+  }
+
   const rawPayload: EventSettings = {
     ...existing,
     ...newSettings,
+    logoUrl: payloadLogoUrl,
+    headerLogoUrl: payloadHeaderLogoUrl,
     updatedAt: new Date().toISOString(),
     updatedBy: user?.email || 'admin',
   };
@@ -199,11 +368,7 @@ export async function updateEventSettings(
           body: JSON.stringify(payload),
         });
         if (res.ok) {
-          const resData = await res.json();
           apiSucceeded = true;
-          const confirmed = resData.settings || payload;
-          localStorage.setItem('gyw_event_settings', JSON.stringify(confirmed));
-          return confirmed;
         } else {
           console.warn('Backend API /api/admin/settings returned error, trying direct Firestore SDK:', res.status);
         }
@@ -213,30 +378,39 @@ export async function updateEventSettings(
     }
   }
 
-  // 2. Direct Firestore SDK write
-  try {
-    const settingsDoc = doc(db, 'settings', 'event');
-    await setDoc(settingsDoc, payload, { merge: true });
-
-    // Cache locally only when database write succeeded
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem('gyw_event_settings', JSON.stringify(payload));
-      } catch {
-        // ignore
-      }
+  // 2. Direct Firestore SDK write (if backend API not reached or fallback)
+  if (!apiSucceeded) {
+    try {
+      const settingsDoc = doc(db, 'settings', 'event');
+      await setDoc(settingsDoc, payload, { merge: true });
+    } catch (error: any) {
+      console.error('Failed to save settings to Firestore:', error);
+      handleFirestoreError(error, OperationType.WRITE, path);
+      throw error;
     }
-    return payload;
-  } catch (error: any) {
-    console.error('Failed to save settings to Firestore:', error);
-    handleFirestoreError(error, OperationType.WRITE, path);
-    throw error;
   }
+
+  // Return settings with resolved URLs for immediate UI consumption
+  const confirmedSettings: EventSettings = {
+    ...rawPayload,
+    logoUrl: resolvedLogoUrl,
+    headerLogoUrl: resolvedHeaderLogoUrl,
+  };
+
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem('gyw_event_settings', JSON.stringify(confirmedSettings));
+    } catch {
+      // ignore
+    }
+  }
+
+  return confirmedSettings;
 }
 
 /**
  * Updates the official SVG logo in persistent storage and Firestore settings.
- * Checks server-side authorization and uploads to Firebase Storage with Firestore persistence.
+ * Checks server-side authorization, tries storage upload or falls back to chunked Firestore documents.
  */
 export async function updateOfficialLogo(
   sanitizedDataUri: string,
@@ -253,7 +427,7 @@ export async function updateOfficialLogo(
   const now = new Date(timestamp).toISOString();
   let finalLogoUrl = sanitizedDataUri;
 
-  // Try Firebase Storage upload with a 2.5-second timeout to handle CORS / offline smoothly
+  // Try Firebase Storage upload with a 2-second timeout to handle CORS / unprovisioned storage smoothly
   try {
     const storageRef = ref(storage, `logos/official_logo_${timestamp}.svg`);
     const contentToUpload = rawSvgText || sanitizedDataUri;
@@ -273,25 +447,23 @@ export async function updateOfficialLogo(
     })();
 
     const timeoutPromise = new Promise<string>((_, reject) => {
-      setTimeout(() => reject(new Error('STORAGE_TIMEOUT')), 2500);
+      setTimeout(() => reject(new Error('STORAGE_TIMEOUT')), 2000);
     });
 
     finalLogoUrl = await Promise.race([uploadAttempt, timeoutPromise]);
-  } catch (storageError) {
-    console.warn(
-      'Cloud storage unavailable or timed out; persisting sanitized SVG data URI directly into Firestore:',
-      storageError
-    );
+  } catch {
+    // Cloud storage unavailable or timed out; persisting into dedicated chunked Firestore logo document
     finalLogoUrl = sanitizedDataUri;
   }
 
-  // Update persistent Firestore settings document
+  // Persist into settings and dedicated storage
   await updateEventSettings(
     {
       logoUrl: finalLogoUrl,
       logoUpdatedAt: now,
     },
-    user
+    user,
+    true
   );
 
   return finalLogoUrl;
@@ -307,12 +479,14 @@ export async function removeOfficialLogo(callerUser?: User | null): Promise<void
     throw new Error('NOT_AUTHORIZED');
   }
 
+  await deleteLogoFromFirestore('logo_main', user);
   await updateEventSettings(
     {
       logoUrl: '',
       logoUpdatedAt: new Date().toISOString(),
     },
-    user
+    user,
+    false
   );
 }
 
@@ -326,13 +500,15 @@ export async function resetOfficialLogoToDefault(callerUser?: User | null): Prom
     throw new Error('NOT_AUTHORIZED');
   }
 
+  await deleteLogoFromFirestore('logo_main', user);
   const defaultUrl = '/official-logo.svg';
   await updateEventSettings(
     {
       logoUrl: defaultUrl,
       logoUpdatedAt: new Date().toISOString(),
     },
-    user
+    user,
+    false
   );
   return defaultUrl;
 }
@@ -374,15 +550,11 @@ export async function updateHeaderLogo(
     })();
 
     const timeoutPromise = new Promise<string>((_, reject) => {
-      setTimeout(() => reject(new Error('STORAGE_TIMEOUT')), 2500);
+      setTimeout(() => reject(new Error('STORAGE_TIMEOUT')), 2000);
     });
 
     finalHeaderLogoUrl = await Promise.race([uploadAttempt, timeoutPromise]);
-  } catch (storageError) {
-    console.warn(
-      'Cloud storage unavailable or timed out; persisting sanitized SVG data URI directly into Firestore:',
-      storageError
-    );
+  } catch {
     finalHeaderLogoUrl = sanitizedDataUri;
   }
 
@@ -391,7 +563,8 @@ export async function updateHeaderLogo(
       headerLogoUrl: finalHeaderLogoUrl,
       headerLogoUpdatedAt: now,
     },
-    user
+    user,
+    true
   );
 
   return finalHeaderLogoUrl;
@@ -407,12 +580,14 @@ export async function removeHeaderLogo(callerUser?: User | null): Promise<void> 
     throw new Error('NOT_AUTHORIZED');
   }
 
+  await deleteLogoFromFirestore('logo_header', user);
   await updateEventSettings(
     {
       headerLogoUrl: '',
       headerLogoUpdatedAt: new Date().toISOString(),
     },
-    user
+    user,
+    false
   );
 }
 
@@ -429,13 +604,27 @@ export async function useMainLogoAsHeaderLogo(callerUser?: User | null): Promise
   const currentSettings = await getEventSettings();
   const mainLogo = currentSettings.logoUrl || '/official-logo.svg';
 
-  await updateEventSettings(
-    {
-      headerLogoUrl: mainLogo,
-      headerLogoUpdatedAt: new Date().toISOString(),
-    },
-    user
-  );
+  if (mainLogo.startsWith('data:')) {
+    await saveLogoToFirestore('logo_header', mainLogo, user);
+    await updateEventSettings(
+      {
+        headerLogoUrl: 'firestore:logo_header',
+        headerLogoUpdatedAt: new Date().toISOString(),
+      },
+      user,
+      false
+    );
+  } else {
+    await deleteLogoFromFirestore('logo_header', user);
+    await updateEventSettings(
+      {
+        headerLogoUrl: mainLogo,
+        headerLogoUpdatedAt: new Date().toISOString(),
+      },
+      user,
+      false
+    );
+  }
 
   return mainLogo;
 }

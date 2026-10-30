@@ -100,8 +100,8 @@ export const AdminLogoManager: React.FC<AdminLogoManagerProps> = ({
         if (validation.error === 'FILE_TOO_LARGE') {
           setErrorMessage(
             lang === 'fr'
-              ? 'Le fichier est trop volumineux. La taille maximale autorisée est de 2 Mo.'
-              : 'File is too large. Maximum allowed size is 2MB.'
+              ? 'Le fichier est trop volumineux. La taille maximale autorisée est de 2,5 Mo.'
+              : 'File is too large. Maximum allowed size is 2.5MB.'
           );
         } else if (validation.error === 'ACTIVE_CODE_OR_DANGEROUS_ELEMENTS_DETECTED') {
           setErrorMessage(
@@ -171,10 +171,13 @@ export const AdminLogoManager: React.FC<AdminLogoManagerProps> = ({
       setMainFileName(null);
     } catch (err: any) {
       console.error('Error saving main logo:', err);
+      const isSizeError = err?.message?.includes('exceeds the maximum') || err?.message?.includes('1048576');
       setErrorMessage(
         err.message === 'NOT_AUTHORIZED'
-          ? 'Action non autorisée. Votre compte administrateur doit être vérifié.'
-          : 'Erreur lors de l\'enregistrement du logo principal dans Firebase.'
+          ? (lang === 'fr' ? 'Action non autorisée. Votre compte administrateur doit être vérifié.' : 'Unauthorized action.')
+          : isSizeError
+          ? (lang === 'fr' ? 'Le fichier SVG dépasse les limites de stockage. Veuillez utiliser un fichier SVG vectoriel optimisé.' : 'SVG exceeds document limit. Please use an optimized SVG.')
+          : (err.message || 'Erreur lors de l\'enregistrement du logo principal dans Firebase.')
       );
     } finally {
       setIsProcessing(false);

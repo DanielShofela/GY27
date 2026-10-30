@@ -1,12 +1,43 @@
 import DOMPurify from 'dompurify';
 
-export const MAX_SVG_SIZE_BYTES = 2 * 1024 * 1024; // 2 MB
+export const MAX_SVG_SIZE_BYTES = 2.5 * 1024 * 1024; // 2.5 MB
 
 export interface SvgValidationResult {
   isValid: boolean;
   sanitizedSvg?: string;
   dataUri?: string;
   error?: string;
+  originalSizeBytes?: number;
+  optimizedSizeBytes?: number;
+}
+
+/**
+ * Optimizes raw SVG text by removing XML comments, doctype declarations,
+ * metadata blocks, editor attributes, and excess whitespace.
+ * Retains 100% of shapes, paths, styles, and vector definitions.
+ */
+export function optimizeSvgContent(rawSvg: string): string {
+  if (!rawSvg || typeof rawSvg !== 'string') return '';
+
+  let optimized = rawSvg
+    // Remove XML comments
+    .replace(/<!--[\s\S]*?-->/g, '')
+    // Remove <?xml ... ?> and <!DOCTYPE ... >
+    .replace(/<\?xml[\s\S]*?\?>/gi, '')
+    .replace(/<!DOCTYPE[\s\S]*?>/gi, '')
+    // Remove <metadata>...</metadata> blocks
+    .replace(/<metadata[\s\S]*?<\/metadata>/gi, '')
+    // Remove inkscape, sodipodi, and adobe editor attributes/tags
+    .replace(/sodipodi:[a-z0-9_-]+="[^"]*"/gi, '')
+    .replace(/inkscape:[a-z0-9_-]+="[^"]*"/gi, '')
+    .replace(/xmlns:sodipodi="[^"]*"/gi, '')
+    .replace(/xmlns:inkscape="[^"]*"/gi, '')
+    // Collapse excess whitespace between tags
+    .replace(/>\s+</g, '><')
+    // Trim remaining leading/trailing whitespace
+    .trim();
+
+  return optimized;
 }
 
 /**
@@ -14,19 +45,22 @@ export interface SvgValidationResult {
  * Guarantees zero executable code, zero foreignObjects, zero external resource leakage.
  */
 export function sanitizeAndValidateSvg(svgRaw: string, fileSizeBytes?: number): SvgValidationResult {
-  if (fileSizeBytes !== undefined && fileSizeBytes > MAX_SVG_SIZE_BYTES) {
-    return { isValid: false, error: 'FILE_TOO_LARGE' };
+  const originalSize = fileSizeBytes || (svgRaw ? svgRaw.length : 0);
+
+  if (originalSize > MAX_SVG_SIZE_BYTES) {
+    return { isValid: false, error: 'FILE_TOO_LARGE', originalSizeBytes: originalSize };
   }
 
   if (!svgRaw || typeof svgRaw !== 'string') {
     return { isValid: false, error: 'EMPTY_FILE' };
   }
 
-  const trimmed = svgRaw.trim();
+  // Pre-clean and optimize
+  const trimmed = optimizeSvgContent(svgRaw);
 
-  // Length check (max 2MB)
+  // Length check (max 2.5MB)
   if (trimmed.length > MAX_SVG_SIZE_BYTES) {
-    return { isValid: false, error: 'FILE_TOO_LARGE' };
+    return { isValid: false, error: 'FILE_TOO_LARGE', originalSizeBytes: originalSize };
   }
 
   // Must contain an <svg tag
@@ -102,5 +136,7 @@ export function sanitizeAndValidateSvg(svgRaw: string, fileSizeBytes?: number): 
     isValid: true,
     sanitizedSvg: sanitized,
     dataUri,
+    originalSizeBytes: originalSize,
+    optimizedSizeBytes: sanitized.length,
   };
 }

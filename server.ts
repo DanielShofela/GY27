@@ -195,11 +195,13 @@ app.post('/api/admin/settings', async (req: Request, res: Response) => {
   };
 
   if (logoUrl !== undefined) {
-    payload.logoUrl = String(logoUrl);
+    const rawLogo = String(logoUrl);
+    payload.logoUrl = rawLogo.startsWith('data:') ? 'firestore:logo_main' : rawLogo;
     payload.logoUpdatedAt = logoUpdatedAt || now;
   }
   if (headerLogoUrl !== undefined) {
-    payload.headerLogoUrl = String(headerLogoUrl);
+    const rawHeaderLogo = String(headerLogoUrl);
+    payload.headerLogoUrl = rawHeaderLogo.startsWith('data:') ? 'firestore:logo_header' : rawHeaderLogo;
     payload.headerLogoUpdatedAt = headerLogoUpdatedAt || now;
   }
 
