@@ -314,7 +314,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {/* Tab 2: Registrations List */}
       {activeTab === 'list' && (
-        <AdminRegistrations registrations={registrations} lang={lang} />
+        <AdminRegistrations
+          registrations={registrations}
+          lang={lang}
+          currentUser={currentUser}
+        />
       )}
 
       {/* Tab 3: Visual Identity (Official SVG Logo Management) */}

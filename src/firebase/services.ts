@@ -148,8 +148,21 @@ export async function getEventSettings(): Promise<EventSettings> {
 }
 
 /**
+ * Strips undefined properties to guarantee strict Firestore SDK compatibility.
+ */
+export function cleanFirestoreData<T extends Record<string, any>>(obj: T): T {
+  const clean: Record<string, any> = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (val !== undefined) {
+      clean[key] = val;
+    }
+  }
+  return clean as T;
+}
+
+/**
  * Updates event settings (Admin only).
- * Ensures atomicity and throws on failure to prevent false success notices.
+ * Connects through the secure backend API with direct Firestore fallback and atomic validation.
  */
 export async function updateEventSettings(
   newSettings: Partial<EventSettings>,
@@ -163,13 +176,44 @@ export async function updateEventSettings(
 
   const path = 'settings/event';
   const existing = await getEventSettings();
-  const payload: EventSettings = {
+  const rawPayload: EventSettings = {
     ...existing,
     ...newSettings,
     updatedAt: new Date().toISOString(),
     updatedBy: user?.email || 'admin',
   };
+  const payload = cleanFirestoreData(rawPayload);
 
+  // 1. Try secure backend API route if authenticated
+  let apiSucceeded = false;
+  if (typeof window !== 'undefined') {
+    try {
+      const idToken = await user?.getIdToken();
+      if (idToken) {
+        const res = await fetch('/api/admin/settings', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          const resData = await res.json();
+          apiSucceeded = true;
+          const confirmed = resData.settings || payload;
+          localStorage.setItem('gyw_event_settings', JSON.stringify(confirmed));
+          return confirmed;
+        } else {
+          console.warn('Backend API /api/admin/settings returned error, trying direct Firestore SDK:', res.status);
+        }
+      }
+    } catch (apiErr) {
+      console.warn('Could not contact /api/admin/settings, falling back to direct Firestore SDK:', apiErr);
+    }
+  }
+
+  // 2. Direct Firestore SDK write
   try {
     const settingsDoc = doc(db, 'settings', 'event');
     await setDoc(settingsDoc, payload, { merge: true });
@@ -500,31 +544,112 @@ export function subscribeToRegistrations(
 }
 
 /**
- * Updates a registration's status or details (Admin only).
+ * Updates an attendee's registration details (Admin only).
+ * Supports updating personal info, church, category, days, and status with server-side validation.
+ */
+export async function updateRegistration(
+  docId: string,
+  updates: Partial<Registration>,
+  callerUser?: User | null
+): Promise<Registration> {
+  const user = callerUser || auth.currentUser;
+  const isAuthorized = await verifyIsAdmin(user);
+  if (!isAuthorized) {
+    throw new Error('NOT_AUTHORIZED');
+  }
+
+  const path = `registrations/${docId}`;
+  const rawPayload = {
+    ...updates,
+    updatedAt: new Date().toISOString(),
+  };
+  const payload = cleanFirestoreData(rawPayload);
+
+  // 1. Try secure backend API
+  if (typeof window !== 'undefined') {
+    try {
+      const idToken = await user?.getIdToken();
+      if (idToken) {
+        const res = await fetch(`/api/admin/registrations/${docId}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          const resData = await res.json();
+          return resData.registration as Registration;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('API /api/admin/registrations failed, falling back to Firestore SDK:', apiErr);
+    }
+  }
+
+  // 2. Fallback to direct Firestore SDK
+  try {
+    await updateDoc(doc(db, 'registrations', docId), payload);
+    const updatedSnap = await getDoc(doc(db, 'registrations', docId));
+    return { id: docId, ...(updatedSnap.data() as Omit<Registration, 'id'>) };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+    throw error;
+  }
+}
+
+/**
+ * Updates a registration's status (Admin only).
  */
 export async function updateRegistrationStatus(
   docId: string,
-  newStatus: RegistrationStatus
+  newStatus: RegistrationStatus,
+  callerUser?: User | null
 ): Promise<void> {
-  const path = `registrations/${docId}`;
-  try {
-    await updateDoc(doc(db, 'registrations', docId), {
-      status: newStatus,
-      updatedAt: new Date().toISOString(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
-  }
+  await updateRegistration(docId, { status: newStatus }, callerUser);
 }
 
 /**
  * Deletes a registration record (Admin only).
  */
-export async function deleteRegistration(docId: string): Promise<void> {
+export async function deleteRegistration(
+  docId: string,
+  callerUser?: User | null
+): Promise<void> {
+  const user = callerUser || auth.currentUser;
+  const isAuthorized = await verifyIsAdmin(user);
+  if (!isAuthorized) {
+    throw new Error('NOT_AUTHORIZED');
+  }
+
   const path = `registrations/${docId}`;
+
+  // 1. Try secure backend API
+  if (typeof window !== 'undefined') {
+    try {
+      const idToken = await user?.getIdToken();
+      if (idToken) {
+        const res = await fetch(`/api/admin/registrations/${docId}`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+          },
+        });
+        if (res.ok) {
+          return;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('API DELETE /api/admin/registrations failed, falling back to Firestore SDK:', apiErr);
+    }
+  }
+
+  // 2. Direct Firestore SDK delete
   try {
     await deleteDoc(doc(db, 'registrations', docId));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
+    throw error;
   }
 }

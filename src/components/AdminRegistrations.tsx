@@ -1,33 +1,37 @@
 import React, { useState, useMemo } from 'react';
-import { Registration, RegistrationStatus, Language } from '../types/index';
+import { Registration, RegistrationStatus, AttendanceDay, AgeCategory, Language } from '../types/index';
 import { translations } from '../i18n/translations';
 import { exportRegistrationsToCsv, triggerCsvDownload } from '../utils/csv';
-import { updateRegistrationStatus, deleteRegistration } from '../firebase/services';
+import { updateRegistration, updateRegistrationStatus, deleteRegistration } from '../firebase/services';
+import { User } from 'firebase/auth';
 import {
   Search,
-  Filter,
   Download,
   Trash2,
   Eye,
   CheckCircle,
-  XCircle,
-  UserCheck,
   AlertTriangle,
   X,
   Phone,
   MapPin,
   Calendar,
   Building,
+  Edit3,
+  Save,
+  Loader2,
+  UserCheck,
 } from 'lucide-react';
 
 interface AdminRegistrationsProps {
   registrations: Registration[];
   lang: Language;
+  currentUser?: User | null;
 }
 
 export const AdminRegistrations: React.FC<AdminRegistrationsProps> = ({
   registrations,
   lang,
+  currentUser,
 }) => {
   const t = translations[lang];
 
@@ -39,12 +43,32 @@ export const AdminRegistrations: React.FC<AdminRegistrationsProps> = ({
   // Selected registration for details modal
   const [activeItem, setActiveItem] = useState<Registration | null>(null);
 
+  // Edit modal state
+  const [itemToEdit, setItemToEdit] = useState<Registration | null>(null);
+  const [editFirstName, setEditFirstName] = useState('');
+  const [editLastName, setEditLastName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editCity, setEditCity] = useState('');
+  const [editChurch, setEditChurch] = useState('');
+  const [editAgeCategory, setEditAgeCategory] = useState<AgeCategory>('not_specified');
+  const [editDays, setEditDays] = useState<AttendanceDay[]>(['jan_1', 'jan_2', 'jan_3']);
+  const [editStatus, setEditStatus] = useState<RegistrationStatus>('confirmed');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
   // Delete modal state
   const [itemToDelete, setItemToDelete] = useState<Registration | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Status updating indicator
+  // Status updating indicator & feedback
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [globalFeedback, setGlobalFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const showNotification = (type: 'success' | 'error', message: string) => {
+    setGlobalFeedback({ type, message });
+    setTimeout(() => setGlobalFeedback(null), 4000);
+  };
 
   // Extract distinct cities for dropdown filter
   const distinctCities = useMemo(() => {
@@ -65,7 +89,6 @@ export const AdminRegistrations: React.FC<AdminRegistrationsProps> = ({
         item.referenceCode.toLowerCase().includes(searchTerm.toLowerCase());
 
       const matchCity = !selectedCity || item.city.trim() === selectedCity;
-
       const matchStatus = selectedStatus === 'all' || item.status === selectedStatus;
 
       return matchSearch && matchCity && matchStatus;
@@ -83,14 +106,80 @@ export const AdminRegistrations: React.FC<AdminRegistrationsProps> = ({
   const handleStatusChange = async (docId: string, newStatus: RegistrationStatus) => {
     setUpdatingId(docId);
     try {
-      await updateRegistrationStatus(docId, newStatus);
+      await updateRegistrationStatus(docId, newStatus, currentUser);
       if (activeItem && activeItem.id === docId) {
         setActiveItem({ ...activeItem, status: newStatus });
       }
-    } catch (err) {
+      showNotification('success', 'Statut mis à jour dans Firebase !');
+    } catch (err: any) {
       console.error('Failed to update status:', err);
+      showNotification('error', err.message || 'Erreur lors de la mise à jour du statut dans Firebase.');
     } finally {
       setUpdatingId(null);
+    }
+  };
+
+  // Open Edit Modal
+  const handleOpenEdit = (item: Registration) => {
+    setItemToEdit(item);
+    setEditFirstName(item.firstName);
+    setEditLastName(item.lastName);
+    setEditPhone(item.whatsappPhone);
+    setEditCity(item.city);
+    setEditChurch(item.church || '');
+    setEditAgeCategory(item.ageCategory || 'not_specified');
+    setEditDays(item.attendanceDays || ['jan_1', 'jan_2', 'jan_3']);
+    setEditStatus(item.status);
+    setEditError(null);
+  };
+
+  // Submit Edit Modal
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!itemToEdit) return;
+
+    if (!editFirstName.trim() || !editLastName.trim()) {
+      setEditError('Le nom et le prénom sont obligatoires.');
+      return;
+    }
+    if (!editCity.trim()) {
+      setEditError('La commune ou ville est obligatoire.');
+      return;
+    }
+    if (editDays.length === 0) {
+      setEditError('Sélectionnez au moins un jour de participation.');
+      return;
+    }
+
+    setIsSavingEdit(true);
+    setEditError(null);
+
+    try {
+      const updated = await updateRegistration(
+        itemToEdit.id,
+        {
+          firstName: editFirstName.trim(),
+          lastName: editLastName.trim(),
+          whatsappPhone: editPhone.trim(),
+          city: editCity.trim(),
+          church: editChurch.trim(),
+          ageCategory: editAgeCategory,
+          attendanceDays: editDays,
+          status: editStatus,
+        },
+        currentUser
+      );
+
+      if (activeItem && activeItem.id === itemToEdit.id) {
+        setActiveItem(updated);
+      }
+      setItemToEdit(null);
+      showNotification('success', 'Informations du participant enregistrées avec succès dans Firebase !');
+    } catch (err: any) {
+      console.error('Failed to save registration edit:', err);
+      setEditError(err.message || 'Erreur lors de l\'enregistrement dans Firebase.');
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
@@ -98,21 +187,50 @@ export const AdminRegistrations: React.FC<AdminRegistrationsProps> = ({
   const handleConfirmDelete = async () => {
     if (!itemToDelete) return;
     setIsDeleting(true);
+    setDeleteError(null);
     try {
-      await deleteRegistration(itemToDelete.id);
+      await deleteRegistration(itemToDelete.id, currentUser);
       if (activeItem && activeItem.id === itemToDelete.id) {
         setActiveItem(null);
       }
       setItemToDelete(null);
-    } catch (err) {
+      showNotification('success', 'Inscription supprimée définitivement de Firestore.');
+    } catch (err: any) {
       console.error('Failed to delete registration:', err);
+      setDeleteError(err.message || 'Erreur lors de la suppression dans Firestore.');
     } finally {
       setIsDeleting(false);
     }
   };
 
+  const toggleEditDay = (day: AttendanceDay) => {
+    if (editDays.includes(day)) {
+      setEditDays(editDays.filter((d) => d !== day));
+    } else {
+      setEditDays([...editDays, day]);
+    }
+  };
+
   return (
     <div className="space-y-4">
+      {/* Global feedback toast */}
+      {globalFeedback && (
+        <div
+          className={`p-3.5 rounded-xl border-2 text-xs font-bold flex items-center gap-2 animate-in fade-in shadow-[2px_2px_0_0_#111111] ${
+            globalFeedback.type === 'success'
+              ? 'bg-green-50 border-green-600 text-green-900'
+              : 'bg-red-50 border-[#F0443E] text-red-900'
+          }`}
+        >
+          {globalFeedback.type === 'success' ? (
+            <CheckCircle className="w-5 h-5 text-green-600 shrink-0" />
+          ) : (
+            <AlertTriangle className="w-5 h-5 text-[#F0443E] shrink-0" />
+          )}
+          <span>{globalFeedback.message}</span>
+        </div>
+      )}
+
       {/* Top action bar: Search, filters, and CSV Export */}
       <div className="bg-white p-4 rounded-2xl border-2 border-[#111111] shadow-[3px_3px_0_0_#111111] space-y-3">
         <div className="flex flex-col sm:flex-row gap-2 justify-between items-stretch sm:items-center">
@@ -129,9 +247,9 @@ export const AdminRegistrations: React.FC<AdminRegistrationsProps> = ({
             {searchTerm && (
               <button
                 onClick={() => setSearchTerm('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400 hover:text-black"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-black cursor-pointer"
               >
-                ✕
+                <X className="w-4 h-4" />
               </button>
             )}
           </div>
@@ -140,7 +258,7 @@ export const AdminRegistrations: React.FC<AdminRegistrationsProps> = ({
           <button
             onClick={handleExportCsv}
             disabled={filteredRegistrations.length === 0}
-            className="inline-flex items-center justify-center gap-2 bg-[#2457FF] hover:bg-[#1a44d1] text-white font-extrabold text-xs sm:text-sm px-4 py-2 rounded-xl border-2 border-[#111111] shadow-[2px_2px_0_0_#111111] cursor-pointer active:translate-x-0.5 active:translate-y-0.5 disabled:opacity-50 transition-all shrink-0"
+            className="inline-flex items-center justify-center gap-2 bg-[#FF6A00] hover:bg-[#e05e00] text-white text-xs sm:text-sm font-black px-4 py-2.5 rounded-xl border-2 border-[#111111] shadow-[2px_2px_0_0_#111111] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none cursor-pointer disabled:opacity-50 transition-all shrink-0"
           >
             <Download className="w-4 h-4" />
             <span>{t.exportCsvButton}</span>
@@ -148,31 +266,28 @@ export const AdminRegistrations: React.FC<AdminRegistrationsProps> = ({
         </div>
 
         {/* Filters bar */}
-        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-100">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-gray-700">
-            <Filter className="w-3.5 h-3.5 text-[#FF6A00]" />
-            <span>Filtres :</span>
-          </div>
+        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-100 text-xs">
+          <span className="font-bold text-gray-600 uppercase text-[11px]">Filtres :</span>
 
-          {/* City filter */}
+          {/* Filter City */}
           <select
             value={selectedCity}
             onChange={(e) => setSelectedCity(e.target.value)}
-            className="bg-white border-2 border-[#111111] rounded-lg px-2.5 py-1 text-xs font-semibold focus:outline-none"
+            className="bg-[#FFF3DD]/50 border-2 border-[#111111] rounded-lg px-2.5 py-1 text-xs font-semibold focus:outline-none"
           >
             <option value="">{t.filterAllCities}</option>
-            {distinctCities.map((city) => (
-              <option key={city} value={city}>
-                {city}
+            {distinctCities.map((c) => (
+              <option key={c} value={c}>
+                {c}
               </option>
             ))}
           </select>
 
-          {/* Status filter */}
+          {/* Filter Status */}
           <select
             value={selectedStatus}
             onChange={(e) => setSelectedStatus(e.target.value)}
-            className="bg-white border-2 border-[#111111] rounded-lg px-2.5 py-1 text-xs font-semibold focus:outline-none"
+            className="bg-[#FFF3DD]/50 border-2 border-[#111111] rounded-lg px-2.5 py-1 text-xs font-semibold focus:outline-none"
           >
             <option value="all">{t.filterAllStatuses}</option>
             <option value="confirmed">{t.statusConfirmed}</option>
@@ -180,16 +295,30 @@ export const AdminRegistrations: React.FC<AdminRegistrationsProps> = ({
             <option value="cancelled">{t.statusCancelled}</option>
           </select>
 
-          <span className="text-xs font-bold text-gray-600 ml-auto">
-            {filteredRegistrations.length} résultat{filteredRegistrations.length > 1 ? 's' : ''}
+          {/* Count Badge */}
+          <span className="ml-auto text-[11px] font-bold text-gray-500">
+            {filteredRegistrations.length} résultat{filteredRegistrations.length > 1 ? 's' : ''} sur{' '}
+            {registrations.length}
           </span>
         </div>
       </div>
 
-      {/* Registrations List (Mobile card layout + Desktop table) */}
+      {/* Registrations List */}
       {filteredRegistrations.length === 0 ? (
-        <div className="bg-white p-8 rounded-2xl border-2 border-dashed border-[#111111] text-center">
-          <p className="text-sm font-bold text-gray-600">Aucune inscription ne correspond à ces critères.</p>
+        <div className="bg-white rounded-2xl border-2 border-[#111111] p-10 text-center shadow-[3px_3px_0_0_#111111]">
+          <p className="text-sm font-bold text-gray-600">Aucun participant ne correspond aux critères.</p>
+          {(searchTerm || selectedCity || selectedStatus !== 'all') && (
+            <button
+              onClick={() => {
+                setSearchTerm('');
+                setSelectedCity('');
+                setSelectedStatus('all');
+              }}
+              className="mt-3 text-xs font-black text-[#FF6A00] underline cursor-pointer"
+            >
+              Réinitialiser les filtres
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-2.5">
@@ -251,7 +380,7 @@ export const AdminRegistrations: React.FC<AdminRegistrationsProps> = ({
 
                 {/* Actions group */}
                 <div className="flex items-center gap-1.5 self-end sm:self-center shrink-0">
-                  {/* Status Toggle Buttons */}
+                  {/* Status Toggle Quick Buttons */}
                   {item.status !== 'attended' && (
                     <button
                       onClick={() => handleStatusChange(item.id, 'attended')}
@@ -259,7 +388,7 @@ export const AdminRegistrations: React.FC<AdminRegistrationsProps> = ({
                       title="Marquer présent à l'événement"
                       className="px-2 py-1 text-[11px] font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-300 rounded-lg cursor-pointer"
                     >
-                      ✓ Présent
+                      {isUpdating ? '...' : '✓ Présent'}
                     </button>
                   )}
 
@@ -270,9 +399,18 @@ export const AdminRegistrations: React.FC<AdminRegistrationsProps> = ({
                       title="Marquer confirmé"
                       className="px-2 py-1 text-[11px] font-bold bg-green-50 text-green-700 hover:bg-green-100 border border-green-300 rounded-lg cursor-pointer"
                     >
-                      Confirmer
+                      {isUpdating ? '...' : 'Confirmer'}
                     </button>
                   )}
+
+                  {/* Edit details */}
+                  <button
+                    onClick={() => handleOpenEdit(item)}
+                    className="p-1.5 bg-[#FFD21F]/30 hover:bg-[#FFD21F] text-[#111111] rounded-lg border border-[#111111] cursor-pointer"
+                    title="Modifier les informations"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                  </button>
 
                   {/* View Details */}
                   <button
@@ -298,86 +436,92 @@ export const AdminRegistrations: React.FC<AdminRegistrationsProps> = ({
         </div>
       )}
 
-      {/* Attendee Details Modal */}
+      {/* =========================================================================
+          MODAL 1: VIEW DETAILS
+         ========================================================================= */}
       {activeItem && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl border-3 border-[#111111] max-w-lg w-full p-6 shadow-[8px_8px_0_0_#111111] relative max-h-[90vh] overflow-y-auto">
             <button
               onClick={() => setActiveItem(null)}
-              className="absolute top-4 right-4 p-1 text-gray-500 hover:text-black cursor-pointer"
+              className="absolute top-4 right-4 text-gray-400 hover:text-black p-1 cursor-pointer"
             >
-              <X className="w-6 h-6" />
+              <X className="w-5 h-5" />
             </button>
 
-            <div className="inline-block bg-[#FFD21F] text-[#111111] text-xs font-black px-3 py-0.5 rounded border border-[#111111] uppercase mb-2">
-              Fiche Participant
+            <div className="border-b-2 border-gray-100 pb-3 mb-4">
+              <span className="font-mono text-xs font-black bg-[#FFF3DD] text-[#111111] px-2.5 py-0.5 rounded border border-[#111111]">
+                {activeItem.referenceCode}
+              </span>
+              <h3 className="text-xl font-black text-[#111111] mt-2 font-['Space_Grotesk']">
+                {activeItem.lastName} {activeItem.firstName}
+              </h3>
+              <p className="text-xs text-gray-500 font-semibold">
+                Inscrit le {new Date(activeItem.createdAt).toLocaleString('fr-FR')}
+              </p>
             </div>
 
-            <h3 className="text-xl font-black text-[#111111] uppercase font-['Space_Grotesk']">
-              {activeItem.lastName} {activeItem.firstName}
-            </h3>
-            <p className="font-mono text-sm font-bold text-[#FF6A00] mt-0.5">
-              Réf: {activeItem.referenceCode}
-            </p>
-
-            <div className="mt-4 space-y-3 text-xs sm:text-sm">
-              <div className="p-3 bg-[#FFF3DD]/60 rounded-xl border border-[#111111] space-y-2">
+            <div className="space-y-3 text-xs">
+              <div className="p-3 bg-[#FFF3DD]/50 rounded-xl border border-[#111111] space-y-1.5">
                 <div className="flex justify-between">
-                  <span className="font-bold text-gray-600">Numéro WhatsApp :</span>
-                  <a
-                    href={`https://wa.me/${activeItem.normalizedPhone.replace('+', '')}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-bold text-[#2457FF] underline flex items-center gap-1"
-                  >
-                    <Phone className="w-3 h-3" />
-                    {activeItem.whatsappPhone}
-                  </a>
+                  <span className="font-bold text-gray-500">Numéro WhatsApp :</span>
+                  <span className="font-mono font-bold text-[#111111]">{activeItem.whatsappPhone}</span>
                 </div>
-
                 <div className="flex justify-between">
-                  <span className="font-bold text-gray-600">Commune / Ville :</span>
+                  <span className="font-bold text-gray-500">Commune / Ville :</span>
                   <span className="font-bold text-[#111111]">{activeItem.city}</span>
                 </div>
-
                 <div className="flex justify-between">
-                  <span className="font-bold text-gray-600">Église :</span>
-                  <span className="font-bold text-[#111111]">
-                    {activeItem.church || 'Non renseignée'}
-                  </span>
+                  <span className="font-bold text-gray-500">Église chrétienne :</span>
+                  <span className="font-bold text-[#111111]">{activeItem.church || 'Non spécifiée'}</span>
                 </div>
-
                 <div className="flex justify-between">
-                  <span className="font-bold text-gray-600">Tranche d'âge :</span>
-                  <span className="font-bold text-[#111111]">
-                    {activeItem.ageCategory || 'Non précisé'}
-                  </span>
+                  <span className="font-bold text-gray-500">Tranche d'âge :</span>
+                  <span className="font-bold text-[#111111]">{activeItem.ageCategory || 'Non précisée'}</span>
                 </div>
+              </div>
 
-                <div className="flex justify-between">
-                  <span className="font-bold text-gray-600">Jours de participation :</span>
-                  <span className="font-bold text-[#111111]">
-                    {(activeItem.attendanceDays || []).join(', ')}
-                  </span>
+              <div>
+                <span className="font-bold text-gray-600 block mb-1">Jours de participation :</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {(activeItem.attendanceDays || []).map((day) => (
+                    <span
+                      key={day}
+                      className="px-2 py-0.5 bg-blue-100 text-blue-900 border border-blue-300 rounded font-bold text-[11px]"
+                    >
+                      {day === 'jan_1' ? '1er Janvier' : day === 'jan_2' ? '2 Janvier' : '3 Janvier'}
+                    </span>
+                  ))}
                 </div>
+              </div>
 
-                <div className="flex justify-between">
-                  <span className="font-bold text-gray-600">Date d'inscription :</span>
-                  <span className="font-bold text-[#111111]">
-                    {new Date(activeItem.createdAt).toLocaleString('fr-FR')}
-                  </span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span className="font-bold text-gray-600">Statut :</span>
-                  <span className="font-extrabold uppercase text-[#FF6A00]">
-                    {activeItem.status}
-                  </span>
-                </div>
+              <div>
+                <span className="font-bold text-gray-600 block mb-1">Statut actuel :</span>
+                <select
+                  value={activeItem.status}
+                  onChange={(e) => handleStatusChange(activeItem.id, e.target.value as RegistrationStatus)}
+                  className="bg-white border-2 border-[#111111] rounded-lg px-2.5 py-1 text-xs font-bold"
+                >
+                  <option value="confirmed">Confirmé</option>
+                  <option value="attended">Présent à l'événement</option>
+                  <option value="cancelled">Annulé</option>
+                </select>
               </div>
             </div>
 
-            <div className="mt-6 flex justify-end gap-2">
+            <div className="mt-6 flex justify-between gap-2 pt-3 border-t border-gray-100">
+              <button
+                onClick={() => {
+                  const item = activeItem;
+                  setActiveItem(null);
+                  handleOpenEdit(item);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#FF6A00] hover:bg-[#e05e00] text-white font-bold text-xs rounded-xl border border-[#111111] cursor-pointer"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>Modifier les données</span>
+              </button>
+
               <button
                 onClick={() => setActiveItem(null)}
                 className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold text-xs rounded-xl cursor-pointer"
@@ -389,7 +533,192 @@ export const AdminRegistrations: React.FC<AdminRegistrationsProps> = ({
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
+      {/* =========================================================================
+          MODAL 2: EDIT REGISTRATION FORM
+         ========================================================================= */}
+      {itemToEdit && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl border-3 border-[#111111] max-w-lg w-full p-6 shadow-[8px_8px_0_0_#111111] relative max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setItemToEdit(null)}
+              disabled={isSavingEdit}
+              className="absolute top-4 right-4 text-gray-400 hover:text-black p-1 cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="border-b-2 border-gray-100 pb-3 mb-4">
+              <div className="inline-block bg-[#FFD21F] text-[#111111] text-[10px] font-black uppercase px-2 py-0.5 rounded border border-[#111111] mb-1">
+                Modification Participant
+              </div>
+              <h3 className="text-lg font-black text-[#111111] uppercase font-['Space_Grotesk']">
+                {itemToEdit.referenceCode}
+              </h3>
+              <p className="text-xs text-gray-500 font-medium">
+                Mettre à jour les informations enregistrées dans Firestore.
+              </p>
+            </div>
+
+            {editError && (
+              <div className="mb-4 p-3 rounded-xl bg-red-50 border-2 border-[#F0443E] text-xs font-bold text-red-900 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-[#F0443E] shrink-0" />
+                <span>{editError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEdit} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="font-bold text-gray-700 block mb-1 uppercase">Nom</label>
+                  <input
+                    type="text"
+                    value={editLastName}
+                    onChange={(e) => setEditLastName(e.target.value)}
+                    className="w-full bg-[#FFF3DD]/40 border-2 border-[#111111] rounded-xl px-3 py-2 font-semibold"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-gray-700 block mb-1 uppercase">Prénom</label>
+                  <input
+                    type="text"
+                    value={editFirstName}
+                    onChange={(e) => setEditFirstName(e.target.value)}
+                    className="w-full bg-[#FFF3DD]/40 border-2 border-[#111111] rounded-xl px-3 py-2 font-semibold"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-gray-700 block mb-1 uppercase">Numéro WhatsApp</label>
+                <input
+                  type="text"
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                  className="w-full bg-[#FFF3DD]/40 border-2 border-[#111111] rounded-xl px-3 py-2 font-semibold"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="font-bold text-gray-700 block mb-1 uppercase">Commune / Ville</label>
+                  <input
+                    type="text"
+                    value={editCity}
+                    onChange={(e) => setEditCity(e.target.value)}
+                    className="w-full bg-[#FFF3DD]/40 border-2 border-[#111111] rounded-xl px-3 py-2 font-semibold"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-gray-700 block mb-1 uppercase">Église (facultatif)</label>
+                  <input
+                    type="text"
+                    value={editChurch}
+                    onChange={(e) => setEditChurch(e.target.value)}
+                    className="w-full bg-[#FFF3DD]/40 border-2 border-[#111111] rounded-xl px-3 py-2 font-semibold"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="font-bold text-gray-700 block mb-1 uppercase">Tranche d'âge</label>
+                  <select
+                    value={editAgeCategory}
+                    onChange={(e) => setEditAgeCategory(e.target.value as AgeCategory)}
+                    className="w-full bg-[#FFF3DD]/40 border-2 border-[#111111] rounded-xl px-2.5 py-2 font-semibold"
+                  >
+                    <option value="under_15">Moins de 15 ans</option>
+                    <option value="15_17">15 – 17 ans</option>
+                    <option value="18_25">18 – 25 ans</option>
+                    <option value="26_35">26 – 35 ans</option>
+                    <option value="over_35">Plus de 35 ans</option>
+                    <option value="not_specified">Non précisée</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-bold text-gray-700 block mb-1 uppercase">Statut d'inscription</label>
+                  <select
+                    value={editStatus}
+                    onChange={(e) => setEditStatus(e.target.value as RegistrationStatus)}
+                    className="w-full bg-[#FFF3DD]/40 border-2 border-[#111111] rounded-xl px-2.5 py-2 font-bold"
+                  >
+                    <option value="confirmed">Confirmé</option>
+                    <option value="attended">Présent</option>
+                    <option value="cancelled">Annulé</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-gray-700 block mb-1.5 uppercase">Jours de présence</label>
+                <div className="flex flex-wrap gap-2">
+                  <label className="inline-flex items-center gap-1.5 bg-[#FFF3DD]/60 border border-[#111111] px-2.5 py-1.5 rounded-lg cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editDays.includes('jan_1')}
+                      onChange={() => toggleEditDay('jan_1')}
+                    />
+                    <span>1er Janvier</span>
+                  </label>
+                  <label className="inline-flex items-center gap-1.5 bg-[#FFF3DD]/60 border border-[#111111] px-2.5 py-1.5 rounded-lg cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editDays.includes('jan_2')}
+                      onChange={() => toggleEditDay('jan_2')}
+                    />
+                    <span>2 Janvier</span>
+                  </label>
+                  <label className="inline-flex items-center gap-1.5 bg-[#FFF3DD]/60 border border-[#111111] px-2.5 py-1.5 rounded-lg cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editDays.includes('jan_3')}
+                      onChange={() => toggleEditDay('jan_3')}
+                    />
+                    <span>3 Janvier</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="mt-5 pt-3 border-t border-gray-100 flex gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setItemToEdit(null)}
+                  disabled={isSavingEdit}
+                  className="px-4 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold text-xs rounded-xl cursor-pointer"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingEdit}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#FF6A00] hover:bg-[#e05e00] text-white font-black text-xs rounded-xl border-2 border-[#111111] shadow-[2px_2px_0_0_#111111] cursor-pointer disabled:opacity-50"
+                >
+                  {isSavingEdit ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Enregistrement...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" />
+                      <span>Enregistrer dans Firestore</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          MODAL 3: DELETE CONFIRMATION
+         ========================================================================= */}
       {itemToDelete && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl border-3 border-[#111111] max-w-sm w-full p-6 shadow-[8px_8px_0_0_#111111] text-center">
@@ -408,6 +737,12 @@ export const AdminRegistrations: React.FC<AdminRegistrationsProps> = ({
               ({itemToDelete.referenceCode}) ?
             </p>
             <p className="text-[11px] text-red-600 font-semibold mt-1">{t.deleteConfirmMsg}</p>
+
+            {deleteError && (
+              <div className="mt-3 p-2 bg-red-50 border border-red-300 rounded text-[11px] text-red-700 font-bold">
+                {deleteError}
+              </div>
+            )}
 
             <div className="mt-5 flex gap-2 justify-center">
               <button

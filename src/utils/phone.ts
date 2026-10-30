@@ -72,3 +72,8 @@ export function normalizePhoneNumber(raw: string, defaultCountryCode = '+225'): 
     displayFormatted: display,
   };
 }
+
+export function isValidPhoneNumber(raw: string): boolean {
+  return normalizePhoneNumber(raw).isValid;
+}
+
