@@ -18,7 +18,10 @@ import { Registration, EventSettings, RegistrationStatus } from '../types/index'
 import { getRegistrationDocId, generateReferenceCode } from '../utils/reference';
 import { isAuthorizedAdmin } from '../utils/security';
 
-const ADMIN_EMAIL = 'digitalsoutien@gmail.com';
+export const ADMIN_EMAILS = [
+  'daniel.shofela01@gmail.com',
+  'digitalsoutien@gmail.com',
+];
 
 export const DEFAULT_SETTINGS: EventSettings = {
   location: 'Abidjan, Côte d\'Ivoire (Lieu exact communiqué prochainement)',

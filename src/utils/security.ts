@@ -2,7 +2,10 @@
  * Security and Authorization Logic for GLORIOUS YOUTH WORLDWIDE 2027
  */
 
-export const AUTHORIZED_ADMIN_EMAILS = ['digitalsoutien@gmail.com'];
+export const AUTHORIZED_ADMIN_EMAILS = [
+  'daniel.shofela01@gmail.com',
+  'digitalsoutien@gmail.com',
+];
 
 export interface AuthUserToken {
   uid: string;
