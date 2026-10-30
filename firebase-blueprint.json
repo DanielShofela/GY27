@@ -1,0 +1,84 @@
+{
+  "entities": {
+    "Registration": {
+      "title": "Registration",
+      "description": "Attendee registration record for Glorious Youth Worldwide 2027",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "firstName": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "lastName": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "whatsappPhone": { "type": "string", "minLength": 8, "maxLength": 30 },
+        "normalizedPhone": { "type": "string", "minLength": 8, "maxLength": 20 },
+        "city": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "church": { "type": "string", "maxLength": 120 },
+        "ageCategory": { "type": "string", "enum": ["under_15", "15_17", "18_25", "26_35", "over_35", "not_specified"] },
+        "attendanceDays": { "type": "array", "description": "Selected participation days (Jan 1, 2, 3)" },
+        "status": { "type": "string", "enum": ["confirmed", "cancelled", "attended"] },
+        "referenceCode": { "type": "string", "minLength": 6, "maxLength": 30 },
+        "consentAccepted": { "type": "boolean" },
+        "consentVersion": { "type": "string", "maxLength": 20 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "firstName",
+        "lastName",
+        "whatsappPhone",
+        "normalizedPhone",
+        "city",
+        "attendanceDays",
+        "status",
+        "referenceCode",
+        "consentAccepted",
+        "createdAt"
+      ]
+    },
+    "EventSettings": {
+      "title": "EventSettings",
+      "description": "Admin configurable parameters for event logistics and registration status",
+      "type": "object",
+      "properties": {
+        "location": { "type": "string", "maxLength": 200 },
+        "schedules": { "type": "string", "maxLength": 200 },
+        "contactPhone": { "type": "string", "maxLength": 50 },
+        "whatsappChannelUrl": { "type": "string", "maxLength": 300 },
+        "registrationsOpen": { "type": "boolean" },
+        "closingDate": { "type": "string", "maxLength": 50 },
+        "announcement": { "type": "string", "maxLength": 500 },
+        "logoUrl": { "type": "string" },
+        "logoUpdatedAt": { "type": "string", "format": "date-time" },
+        "headerLogoUrl": { "type": "string" },
+        "headerLogoUpdatedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["registrationsOpen", "updatedAt"]
+    },
+    "AdminProfile": {
+      "title": "AdminProfile",
+      "description": "Authorized administrator document",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email", "maxLength": 120 },
+        "role": { "type": "string", "enum": ["admin", "superadmin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role"]
+    }
+  },
+  "firestore": {
+    "/registrations/{registrationId}": {
+      "schema": { "$ref": "#/entities/Registration" },
+      "description": "Collection of attendee registrations"
+    },
+    "/settings/event": {
+      "schema": { "$ref": "#/entities/EventSettings" },
+      "description": "Global event configuration and registration toggles"
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminProfile" },
+      "description": "Authorized administrator documents"
+    }
+  }
+}

@@ -1,0 +1,96 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\+]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == 'digitalsoutien@gmail.com' && request.auth.token.email_verified == true) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function isValidRegistration(data) {
+      return data.keys().hasAll([
+        'firstName',
+        'lastName',
+        'whatsappPhone',
+        'normalizedPhone',
+        'city',
+        'attendanceDays',
+        'status',
+        'referenceCode',
+        'consentAccepted',
+        'createdAt'
+      ])
+      && data.keys().hasOnly([
+        'id',
+        'firstName',
+        'lastName',
+        'whatsappPhone',
+        'normalizedPhone',
+        'city',
+        'church',
+        'ageCategory',
+        'attendanceDays',
+        'status',
+        'referenceCode',
+        'consentAccepted',
+        'consentVersion',
+        'createdAt',
+        'updatedAt'
+      ])
+      && data.firstName is string && data.firstName.size() >= 2 && data.firstName.size() <= 80
+      && data.lastName is string && data.lastName.size() >= 2 && data.lastName.size() <= 80
+      && data.whatsappPhone is string && data.whatsappPhone.size() >= 8 && data.whatsappPhone.size() <= 30
+      && data.normalizedPhone is string && data.normalizedPhone.size() >= 8 && data.normalizedPhone.size() <= 20
+      && data.city is string && data.city.size() >= 2 && data.city.size() <= 100
+      && (!('church' in data) || (data.church is string && data.church.size() <= 120))
+      && (!('ageCategory' in data) || (data.ageCategory in ['under_15', '15_17', '18_25', '26_35', 'over_35', 'not_specified']))
+      && data.attendanceDays is list && data.attendanceDays.size() >= 1 && data.attendanceDays.size() <= 3
+      && data.status in ['confirmed', 'cancelled', 'attended']
+      && data.referenceCode is string && data.referenceCode.size() >= 6 && data.referenceCode.size() <= 30
+      && data.consentAccepted == true
+      && (!('consentVersion' in data) || (data.consentVersion is string && data.consentVersion.size() <= 20));
+    }
+
+    match /registrations/{registrationId} {
+      // PII Protection: Only verified admins can list, get or delete registrations
+      allow get, list, delete: if isAdmin();
+      
+      // Public registration: anyone can submit if valid and not an existing duplicate
+      allow create: if isValidId(registrationId)
+        && isValidRegistration(incoming())
+        && (!exists(/databases/$(database)/documents/registrations/$(registrationId)));
+
+      // Admins can update status, church, etc.
+      allow update: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      // Event settings (dates, location info, registration open/closed status) are publicly readable
+      allow get, list: if true;
+      allow write: if isAdmin();
+    }
+
+    match /admins/{adminId} {
+      allow get, list, write: if isAdmin();
+    }
+  }
+}
