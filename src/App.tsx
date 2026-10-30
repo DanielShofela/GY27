@@ -19,7 +19,7 @@ import { AdminLogin } from './components/AdminLogin';
 import { AdminDashboard } from './components/AdminDashboard';
 import { AdminAccessDenied } from './components/AdminAccessDenied';
 import { PrivacyModal } from './components/PrivacyModal';
-import { ShieldCheck, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 type AppRoute = 'home' | 'register' | 'confirmation' | 'admin';
 
@@ -98,29 +98,6 @@ export default function App() {
         console.error('Failed to load event settings:', err);
         setIsSettingsLoading(false);
       });
-
-    if (typeof window !== 'undefined') {
-      (window as any).__setDevAdmin = () => {
-        const mockAdmin = {
-          uid: 'dev-admin-uid-1',
-          email: 'digitalsoutien@gmail.com',
-          emailVerified: true,
-        } as User;
-        setCurrentUser(mockAdmin);
-        setIsAdmin(true);
-        setCurrentPage('admin');
-      };
-      (window as any).__setDevUnauthorized = () => {
-        const mockStranger = {
-          uid: 'stranger-uid-999',
-          email: 'unauthorized.user@gmail.com',
-          emailVerified: true,
-        } as User;
-        setCurrentUser(mockStranger);
-        setIsAdmin(false);
-        setCurrentPage('admin');
-      };
-    }
   }, []);
 
   // 2. Strict Auth state observer & Server-side role verification

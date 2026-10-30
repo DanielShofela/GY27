@@ -19,7 +19,6 @@ import {
   Edit3,
   Save,
   Loader2,
-  UserCheck,
 } from 'lucide-react';
 
 interface AdminRegistrationsProps {

@@ -269,7 +269,8 @@ app.post('/api/register', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Le consentement est obligatoire pour valider l\'inscription' });
   }
 
-  const normalizedPhone = normalizePhoneNumber(whatsappPhone);
+  const phoneCheck = normalizePhoneNumber(whatsappPhone);
+  const normalizedPhone = phoneCheck.normalized;
   const docId = getRegistrationDocId(normalizedPhone);
   const referenceCode = generateReferenceCode();
   const now = new Date().toISOString();
@@ -278,7 +279,7 @@ app.post('/api/register', async (req: Request, res: Response) => {
     id: docId,
     firstName: firstName.trim().slice(0, 80),
     lastName: lastName.trim().slice(0, 80),
-    whatsappPhone: whatsappPhone.trim().slice(0, 30),
+    whatsappPhone: phoneCheck.displayFormatted || whatsappPhone.trim().slice(0, 30),
     normalizedPhone,
     city: city.trim().slice(0, 100),
     church: String(church || '').trim().slice(0, 120),
@@ -354,7 +355,9 @@ app.patch('/api/admin/registrations/:id', async (req: Request, res: Response) =>
   if (updates.whatsappPhone) {
     allowedUpdates.whatsappPhone = String(updates.whatsappPhone).trim();
     if (isValidPhoneNumber(updates.whatsappPhone)) {
-      allowedUpdates.normalizedPhone = normalizePhoneNumber(updates.whatsappPhone);
+      const check = normalizePhoneNumber(updates.whatsappPhone);
+      allowedUpdates.normalizedPhone = check.normalized;
+      allowedUpdates.whatsappPhone = check.displayFormatted;
     }
   }
 

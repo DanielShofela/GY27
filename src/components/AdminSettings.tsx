@@ -14,7 +14,6 @@ import {
   Calendar,
   Megaphone,
   Link,
-  ShieldAlert,
   Image as ImageIcon,
   ArrowRight,
 } from 'lucide-react';

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Language } from '../types/index';
 import { translations } from '../i18n/translations';
-import { Shield, Sparkles, Globe, UserCheck } from 'lucide-react';
+import { Sparkles, UserCheck } from 'lucide-react';
 import { User } from 'firebase/auth';
 
 interface HeaderProps {

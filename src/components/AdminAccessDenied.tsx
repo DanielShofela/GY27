@@ -2,7 +2,7 @@ import React from 'react';
 import { User } from 'firebase/auth';
 import { Language } from '../types/index';
 import { translations } from '../i18n/translations';
-import { ShieldAlert, LogOut, ArrowLeft, Lock, Server } from 'lucide-react';
+import { ShieldAlert, LogOut, ArrowLeft, Server } from 'lucide-react';
 
 interface AdminAccessDeniedProps {
   user: User;

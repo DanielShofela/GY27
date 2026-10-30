@@ -10,7 +10,6 @@ import {
   CalendarDays,
   TrendingUp,
   MapPin,
-  Clock,
   LogOut,
   Sliders,
   ListFilter,

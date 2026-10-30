@@ -26,9 +26,11 @@ export const ConfirmationView: React.FC<ConfirmationViewProps> = ({
   };
 
   const handleShareWhatsApp = () => {
-    const text = encodeURIComponent(
-      `${t.whatsappShareText} https://ais-pre-fcqquovzkgqmrc6afc3sfb-294693009847.europe-west2.run.app`
-    );
+    const shareUrl =
+      typeof window !== 'undefined'
+        ? window.location.origin
+        : 'https://ais-pre-oxlr73tpophpwaeoh7gnxt-598477585971.europe-west2.run.app';
+    const text = encodeURIComponent(`${t.whatsappShareText} ${shareUrl}`);
     window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
   };
 

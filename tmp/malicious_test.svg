@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <script type="text/javascript">alert('HACKED')</script>
-  <foreignObject width="100" height="100">
-    <body xmlns="http://www.w3.org/1999/xhtml">
-      <script>document.location='http://evil.com'</script>
-    </body>
-  </foreignObject>
-  <circle cx="50" cy="50" r="40" fill="red" onload="alert(1)" />
-</svg>

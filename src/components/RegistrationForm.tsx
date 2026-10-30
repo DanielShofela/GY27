@@ -5,17 +5,12 @@ import { normalizePhoneNumber } from '../utils/phone';
 import { submitRegistration } from '../firebase/services';
 import confetti from 'canvas-confetti';
 import {
-  CheckCircle2,
   AlertCircle,
   Sparkles,
-  Lock,
   ArrowLeft,
-  CalendarCheck2,
   Phone,
   MapPin,
   Church,
-  User,
-  HeartHandshake,
 } from 'lucide-react';
 
 interface RegistrationFormProps {
