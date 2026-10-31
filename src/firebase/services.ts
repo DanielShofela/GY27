@@ -64,7 +64,7 @@ export function getInitialEventSettings(): EventSettings {
  * Checks if the currently authenticated user is an authorized administrator.
  * Validates verified email against primary admin and checks Firestore admins/{uid}.
  */
-export async function verifyIsAdmin(user: User | null): Promise<boolean> {
+export async function verifyIsAdmin(user?: User | null): Promise<boolean> {
   if (!user || !user.email) return false;
 
   // 1. Strict primary admin check with verified email

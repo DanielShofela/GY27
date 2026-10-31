@@ -277,10 +277,13 @@ export const AdminLogoManager: React.FC<AdminLogoManagerProps> = ({
       setHeaderFileName(null);
     } catch (err: any) {
       console.error('Error saving header logo:', err);
+      const isSizeError = err?.message?.includes('exceeds the maximum') || err?.message?.includes('1048576');
       setErrorMessage(
         err.message === 'NOT_AUTHORIZED'
-          ? 'Action non autorisée. Votre compte administrateur doit être vérifié.'
-          : 'Erreur lors de l\'enregistrement du logo du header dans Firebase.'
+          ? (lang === 'fr' ? 'Action non autorisée. Votre compte administrateur doit être vérifié.' : 'Unauthorized action.')
+          : isSizeError
+          ? (lang === 'fr' ? 'Le fichier SVG dépasse les limites de stockage. Veuillez utiliser un fichier SVG vectoriel optimisé.' : 'SVG exceeds document limit. Please use an optimized SVG.')
+          : (err.message || 'Erreur lors de l\'enregistrement du logo du header dans Firebase.')
       );
     } finally {
       setIsProcessing(false);

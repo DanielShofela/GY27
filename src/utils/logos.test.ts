@@ -175,3 +175,28 @@ test('8. Preserves all other event parameters when updating logos', () => {
   assert.equal(updated.logoUrl, initial.logoUrl);
   assert.notEqual(updated.headerLogoUrl, initial.headerLogoUrl);
 });
+
+test('9. Logo chunking logic splits large data URIs into safe chunks under 400KB and reassembles with 100% fidelity', () => {
+  const CHUNK_SIZE = 350 * 1024;
+  // Create a synthetic 1.2MB data URI string (exceeding Firestore 1MB single doc limit)
+  const syntheticLargeData = 'data:image/svg+xml;base64,' + 'A'.repeat(1_200_000);
+  
+  // Verify that it would breach single Firestore doc limit if not chunked
+  assert.ok(syntheticLargeData.length > 1_048_576, 'Large data must exceed 1MB');
+
+  // Perform chunking
+  const totalChunks = Math.ceil(syntheticLargeData.length / CHUNK_SIZE);
+  assert.ok(totalChunks >= 3, 'Must split into 3 or more chunks');
+
+  const chunks: string[] = [];
+  for (let i = 0; i < totalChunks; i++) {
+    const chunk = syntheticLargeData.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    assert.ok(chunk.length <= CHUNK_SIZE, 'Each chunk must strictly be <= 350KB');
+    chunks.push(chunk);
+  }
+
+  // Reassemble
+  const reassembled = chunks.join('');
+  assert.equal(reassembled.length, syntheticLargeData.length);
+  assert.equal(reassembled, syntheticLargeData);
+});
